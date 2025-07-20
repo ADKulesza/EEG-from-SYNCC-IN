@@ -54,3 +54,5 @@ ECG_CHANNELS = {
     "caregiver": CAREGIVER_ECG_CHANNELS,
     "child": CHILD_ECG_CHANNELS,
 }
+
+DIODE_CHANNEL = "Diode"

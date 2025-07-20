@@ -1,2 +1,8 @@
-def save_processed_data(output):
-    pass
+import numpy as np
+
+
+def save_signal(output_sig, output_path):
+    np.save(
+        output_path,
+        output_sig,
+    )

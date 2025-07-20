@@ -1,11 +1,14 @@
 import glob
+import json
 import os
 
 import matplotlib.pyplot as plt
 import neurokit2 as nk
 import numpy as np
-from constants import ECG_CHANNELS, EEG_CHANNELS
+import scipy.signal as ss
+from constants import DIODE_CHANNEL, ECG_CHANNELS, EEG_CHANNELS
 from read_raw_data import read_eeg
+from save_data import save_signal
 
 
 def preprocess_eeg(data, channels, fs_eeg, calibration_param, to_process):
@@ -28,9 +31,6 @@ def preprocess_eeg(data, channels, fs_eeg, calibration_param, to_process):
         order=2,
     )
 
-    # plt.plot(eeg[:, :10*fs_eeg].T)
-    # plt.title("Po filtrowaniu")
-    # plt.show()
     return eeg
 
 
@@ -64,14 +64,66 @@ def preprocess_ecg(data, channels, fs, calib_param, to_process, plot=False):
     return cleaned_ecg, ecg_rate
 
 
+def find_diode_blinks(diode_sig, fs):
+    reversed_diode_sig = -diode_sig + np.max(diode_sig)
+    peaks, prop_dict = ss.find_peaks(
+        reversed_diode_sig,
+        height=55000,
+        prominence=50000,
+        width=(fs / 2 - 100, fs),
+        distance=fs / 2 - 100,
+    )
+
+    peaks = np.array(peaks)
+    if len(peaks) < 6:
+        return -1
+    # peaks = np.append(peaks, len(diode_sig))
+    diff_between_peaks = np.diff(peaks)
+    wh = np.where(diff_between_peaks > 3 * fs)[0]
+    groups = {}
+    groups[int(wh[0]) + 1] = peaks[: wh[0] + 1].tolist()
+    groups[int(wh[1] - wh[0])] = peaks[wh[0] + 1 : wh[1] + 1].tolist()
+    groups[len(peaks[wh[1] + 1 :])] = peaks[wh[1] + 1 :].tolist()
+
+    return groups
+
+
+def save_blinks_timestamps(blinks_range, output_path):
+    filename = os.path.join(output_path, "diode_blinks.json")
+    # print(filename)
+    with open(filename, "w") as f:
+        json.dump(blinks_range, f, indent=4)
+
+    f.close()
+
+
+def preprocess_diode_signal(data, channels, fs, output_path):
+    diode_idx = channels.get_idx(DIODE_CHANNEL)
+
+    diode_sig = data[diode_idx, :]
+
+    blinks = find_diode_blinks(diode_sig, fs)
+    blinks_range = {}
+    if type(blinks) is dict:
+        for k, v in blinks.items():
+            blinks_range[k] = [int(v[0] - fs / 2), int(v[-1] + fs / 2)]
+
+    else:
+        for i in range(1, 4):
+            blinks_range[i] = []
+    # print(blinks_range)
+    save_blinks_timestamps(blinks_range, output_path)
+
+
 def preprocess_multiple_data(dir_name, output_dir):
     subdirectories = [
         f for f in glob.glob(os.path.join(dir_name, "*/")) if os.path.isdir(f)
     ]
 
+    # blinks_df = pd.DataFrame(columns=['diade', '1start', '1end', '2start', '2end', '3start', '3end'])
     for subdir in subdirectories:
         data_paths = glob.glob(os.path.join(subdir, "*.obci.raw"))
-        for data_path in data_paths:
+        for data_path in data_paths:  # ?
             filename = os.path.basename(data_path)
             diada = filename[:-4]
             output_path = os.path.join(
@@ -91,10 +143,7 @@ def preprocess_multiple_data(dir_name, output_dir):
                 "caregiver",
             )
 
-            np.save(
-                os.path.join(output_path, "eeg_caregiver.npy"),
-                eeg,
-            )
+            save_signal(eeg, os.path.join(output_path, "eeg_caregiver.npy"))
 
             eeg = preprocess_eeg(
                 data,
@@ -104,10 +153,7 @@ def preprocess_multiple_data(dir_name, output_dir):
                 "child",
             )
 
-            np.save(
-                os.path.join(output_path, "eeg_child.npy"),
-                eeg,
-            )
+            save_signal(eeg, os.path.join(output_path, "eeg_child.npy"))
 
             ecg, ecg_rate = preprocess_ecg(
                 data,
@@ -117,14 +163,8 @@ def preprocess_multiple_data(dir_name, output_dir):
                 "caregiver",
             )
 
-            np.save(
-                os.path.join(output_path, "ecg_caregiver.npy"),
-                ecg,
-            )
-            np.save(
-                os.path.join(output_path, "ecg_rate_caregiver.npy"),
-                ecg_rate,
-            )
+            save_signal(ecg, os.path.join(output_path, "ecg_caregiver.npy"))
+            save_signal(ecg_rate, os.path.join(output_path, "ecg_rate_caregiver.npy"))
 
             ecg, ecg_rate = preprocess_ecg(
                 data,
@@ -134,14 +174,11 @@ def preprocess_multiple_data(dir_name, output_dir):
                 "child",
             )
 
-            np.save(
-                os.path.join(output_path, "ecg_child.npy"),
-                ecg,
-            )
-            np.save(
-                os.path.join(output_path, "ecg_rate_child.npy"),
-                ecg_rate,
-            )
+            save_signal(ecg, os.path.join(output_path, "ecg_child.npy"))
+            save_signal(ecg_rate, os.path.join(output_path, "ecg_rate_child.npy"))
+
+            # Diode
+            preprocess_diode_signal(data, channels, fs_eeg, output_path)
 
 
 path = "../../../Warsaw pilot"
